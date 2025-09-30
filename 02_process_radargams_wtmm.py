@@ -16,28 +16,15 @@ from Xsmurf_functions import *
 # In[ ]:
 
 
-###### adjustable input parameters ####################
-rdpath = '/Users/jukesliu/Documents/POSTDOC/snow-radar/ReynoldsMountain/ProcessedMay25_xyz/' # folder with
-# stitched radargrams and x, y coordinate numpy files
-outpath = '/Users/jukesliu/Documents/POSTDOC/snow-radar/RY_output/' # folder to contain the results of the WTMM
-
-Isurf_thresh = 800 # maximum depth of surface picks (in index number)
-velocity = 2.25e10 # radar wave velocity
-wtmm_scales = [1000,800] # list of wtmm scales to test
-size_thresholds = [200,100] # list of chain size minimums to test
-#######################################################
-
-
-# In[ ]:
-
-
 args = sys.argv # grab input arguments ################
 
 rdpath = args[1]; outpath = args[2] # full paths to folders
-Isurf_thresh = args[3] # maximum depth of surface picks (in index number)
-velocity = args[4] # radar wave velocity
-wtmm_scales = args[5] # list of wtmm scales to test
-size_thresholds = args[6] # list of chain size minimums to test
+Isurf_thresh = int(args[3]) # maximum depth of surface picks (in index number)
+velocity = float(args[4]) # radar wave velocity
+wtmm_scale = int(args[5]) # list of wtmm scales to test
+size_thresh = int(args[6]) # list of chain size minimums to test
+mod_thresh_multiplier = int(args[7]) # minimum modulus value (as a fraction of the mean in the entire image)
+# (e.g., 1 = mean, 1.5 = 150% of the mean value, 0.8 = 80% of the mean)
 #########################################################
 
 
@@ -58,7 +45,7 @@ if not os.path.exists(outpath):
     print(outpath+' folder created.')
 
 
-# In[5]:
+# In[7]:
 
 
 hmin_idx = all_rd.shape[0] # use the vertical dimension of the stitched radargram to split into square chunks
@@ -94,125 +81,118 @@ for i in range(0, len(hsplit_idxs)-1):
         print('rd saved already.')
         
     # WTMM ANALYSIS:
-    # mod_thresh_multiplier = 1.7
-    for wtmm_scale in wtmm_scales:
-        for size_thresh in size_thresholds:
-            for mod_thresh_multiplier in [1]:
-                rd_depths = []; rd_depth_xs = []; rd_depth_ys = []; rd_surf_idxs = []; rd_ground_idxs = []; rd_x_idxs = []
-                print('rd'+str(counter)+'_'+str(wtmm_scale)+'scale_'+str(size_thresh)+'size_'+str(mod_thresh_multiplier)+'mod')
-                if os.path.exists('/Users/jukesliu/Documents/POSTDOC/snow-radar/RY_output/coords/rd'+str(counter)+'_'+str(wtmm_scale)+'scale_'+str(size_thresh)+'size_'+str(mod_thresh_multiplier)+'mod.csv'):
-                    print('file exists. skipping to next:') # if parameter combo output already exists
-                    # skip it
+    rd_depths = []; rd_depth_xs = []; rd_depth_ys = []; rd_surf_idxs = []; rd_ground_idxs = []; rd_x_idxs = []
+    print('rd'+str(counter)+'_'+str(wtmm_scale)+'scale_'+str(size_thresh)+'size_'+str(mod_thresh_multiplier)+'mod')
+    if os.path.exists('/Users/jukesliu/Documents/POSTDOC/snow-radar/RY_output/coords/rd'+str(counter)+'_'+str(wtmm_scale)+'scale_'+str(size_thresh)+'size_'+str(mod_thresh_multiplier)+'mod.csv'):
+        print('file exists. skipping to next:') # if parameter combo output already exists, skip it
+    else:
+        x_idxs = []; surf_idxs = []; ground_idxs = []; depths = [] # list of wtmm outputs
+
+        # Run the WTMM
+        [dx,dy,mm,m,a] = wtmm2d_v2(radargram,'gauss',wtmm_scale)  
+
+        # # Visualize outputs from wtmm2d:
+        # fig, axs = plt.subplots(2,3,figsize=(15,10))
+        # axs[0,0].imshow(dx, aspect='equal', cmap = 'gray', interpolation='none'); axs[0,0].set_title('dx') # x gradient
+        # axs[0,1].imshow(dy, aspect='equal', cmap = 'gray', interpolation='none'); axs[0,1].set_title('dy') # y gradient
+        # axs[0,2].imshow(a, aspect='equal', cmap = 'gray', interpolation='none'); axs[0,2].set_title('a') # argument            
+        # axs[1,0].imshow(mm, aspect='equal', cmap = 'gray', interpolation='none', vmin = np.min(mm), vmax = np.max(m)); 
+        # axs[1,0].set_title('mm') # modulus maxima (interpolated)
+        # axs[1,1].imshow(m, aspect='equal', cmap = 'gray', interpolation='none',vmin = np.min(mm), vmax = np.max(m));
+        # axs[1,1].set_title('m') # modulus
+        # axs[-1,-1].axis('off')
+        # plt.show()
+
+        # Chain the traces
+        cmm = wtmmchains(mm,a,0,wtmm_scale,wtmm_scale/4) # chain at a specified scale (UNMASKED)
+
+        # Filter chains based on size threshold
+        cmm_passed = []
+        mods = []
+        for j in range(0, len(cmm)):
+            if cmm[j].size > size_thresh: # adjust this condition to threshold
+                cmm_passed.append(cmm[j])
+                mods.append(cmm[j].linemeanmod) # collect mod information
+
+        # Filter again based on gradient values (mean modulus)
+        cmm_passed_2 = []
+        # Filter chains based on size and mod threshold
+        for k in range(0, len(cmm_passed)):
+               if cmm_passed[k].linemeanmod > np.nanmean(mods)*mod_thresh_multiplier:
+                cmm_passed_2.append(cmm_passed[k])
+
+        # STRATEGY TO GRAB FIRST RETURNS FROM CHAINS
+        xs = []; ys = [] # grab all chain coordinates
+        for n in range(0, len(cmm_passed_2)):
+            xs.extend(cmm_passed_2[n].ix); ys.extend(cmm_passed_2[n].iy)
+        chain_coords = list(zip(xs,ys)); chain_coords.sort() # sort by xs
+        [xs,ys] = zip(*chain_coords)
+        xs = list(xs); ys = list(ys)
+
+        # PLOT RESULTS:
+        a=0.3
+        fig,ax = plt.subplots(1,figsize=(15,5))
+        ax.imshow(np.array(radargram),cmap='gray')
+        ax.set_xlim([0, np.array(radargram).shape[1]])
+        ax.set_ylim([0, np.array(radargram).shape[0]])
+        ax.invert_yaxis(); ax.set_aspect('equal')
+
+        # FOR EACH COLUMN GRAB FIRST AND SECOND RETURN AND SUBTRACT (ONLY IF THERE ARE AT LEAST TWO), WINDOW REMOVED
+        for x_idx in range(0,radargram.shape[1]): 
+            coord_idxs = np.where(np.array(xs) == x_idx)
+            coord_idxs = coord_idxs[0]
+            # if there are at least 2 crossings at the x
+            if len(coord_idxs) > 2:
+                cxs = []; cys = []
+                for idx in coord_idxs:
+                    cxs.append(xs[idx]); cys.append(ys[idx]) # grab the x and y coordinates
+
+                # grab the first pair of ys that is > 1 apart
+                diff_idxs = np.where(np.diff(cys) > 1)[0]
+                if len(diff_idxs) > 0:
+                    diff_first = diff_idxs[0]
+                    diff_last = diff_idxs[-1]+1
+                    Isurf = int(cys[diff_first]) # grab the returns
+                    # Iground = int(cys[diff_first+1]) # grab the paired return
+                    Iground = int(cys[diff_last]) # grab the last return
+
+                    if Isurf <= Isurf_thresh and Iground >= Isurf_thresh: # look within upper portion for surface return, ground peak must be below
+                        depth = (TWT[Iground]-TWT[Isurf])*velocity/2 # calculate depth from TWTs
+                        # print(depth)
+                        ax.plot(x_idx, Isurf, 'b.', alpha=a)# plot the surface return
+                        ax.plot(x_idx, Iground, 'r.', alpha=a)# plot the ground return
+                        # depths.append(depth)
+
+                        all_depths.append(depth[0]); rd_depths.append(depth[0])
+                        all_depth_xs.append(xs_split[x_idx]); rd_depth_xs.append(xs_split[x_idx])
+                        all_depth_ys.append(ys_split[x_idx]); rd_depth_ys.append(ys_split[x_idx])
+                        rd_surf_idxs.append(Isurf); rd_ground_idxs.append(Iground)
+                        rd_x_idxs.append(x_idx)
+                    else:
+                        all_depths.append(np.NaN); rd_depths.append(np.NaN)
+                        all_depth_xs.append(np.NaN); rd_depth_xs.append(np.NaN)
+                        all_depth_ys.append(np.NaN); rd_depth_ys.append(np.NaN)
+                        rd_surf_idxs.append(np.NaN); rd_ground_idxs.append(np.NaN)
+                        rd_x_idxs.append(np.NaN)
                 else:
-#                 # if counter == 1:
-#                 if counter >= 32: # start / stop at a certain rd
-                    x_idxs = []; surf_idxs = []; ground_idxs = []; depths = [] # list of wtmm outputs
-                    
-                    # Run the WTMM
-                    [dx,dy,mm,m,a] = wtmm2d_v2(radargram,'gauss',wtmm_scale)  
-                    
-                    # # Visualize outputs from wtmm2d:
-                    # fig, axs = plt.subplots(2,3,figsize=(15,10))
-                    # axs[0,0].imshow(dx, aspect='equal', cmap = 'gray', interpolation='none'); axs[0,0].set_title('dx') # x gradient
-                    # axs[0,1].imshow(dy, aspect='equal', cmap = 'gray', interpolation='none'); axs[0,1].set_title('dy') # y gradient
-                    # axs[0,2].imshow(a, aspect='equal', cmap = 'gray', interpolation='none'); axs[0,2].set_title('a') # argument            
-                    # axs[1,0].imshow(mm, aspect='equal', cmap = 'gray', interpolation='none', vmin = np.min(mm), vmax = np.max(m)); 
-                    # axs[1,0].set_title('mm') # modulus maxima (interpolated)
-                    # axs[1,1].imshow(m, aspect='equal', cmap = 'gray', interpolation='none',vmin = np.min(mm), vmax = np.max(m));
-                    # axs[1,1].set_title('m') # modulus
-                    # axs[-1,-1].axis('off')
-                    # plt.show()
-                    
-                    # Chain the traces
-                    cmm = wtmmchains(mm,a,0,wtmm_scale,wtmm_scale/4) # chain at a specified scale (UNMASKED)
-                    
-                    # Filter chains based on size threshold
-                    cmm_passed = []
-                    mods = []
-                    for j in range(0, len(cmm)):
-                        if cmm[j].size > size_thresh: # adjust this condition to threshold
-                            cmm_passed.append(cmm[j])
-                            mods.append(cmm[j].linemeanmod) # collect mod information
-                    
-                    # Filter again based on gradient values (mean modulus)
-                    cmm_passed_2 = []
-                    # Filter chains based on size and mod threshold
-                    for k in range(0, len(cmm_passed)):
-                           if cmm_passed[k].linemeanmod > np.nanmean(mods)*mod_thresh_multiplier:
-                            cmm_passed_2.append(cmm_passed[k])
-                    
-                    # STRATEGY TO GRAB FIRST RETURNS FROM CHAINS
-                    xs = []; ys = [] # grab all chain coordinates
-                    for n in range(0, len(cmm_passed_2)):
-                        xs.extend(cmm_passed_2[n].ix); ys.extend(cmm_passed_2[n].iy)
-                    chain_coords = list(zip(xs,ys)); chain_coords.sort() # sort by xs
-                    [xs,ys] = zip(*chain_coords)
-                    xs = list(xs); ys = list(ys)
-                
-                    # PLOT RESULTS:
-                    a=0.3
-                    fig,ax = plt.subplots(1,figsize=(15,5))
-                    ax.imshow(np.array(radargram),cmap='gray')
-                    ax.set_xlim([0, np.array(radargram).shape[1]])
-                    ax.set_ylim([0, np.array(radargram).shape[0]])
-                    ax.invert_yaxis(); ax.set_aspect('equal')
-                    
-                    # FOR EACH COLUMN GRAB FIRST AND SECOND RETURN AND SUBTRACT (ONLY IF THERE ARE AT LEAST TWO), WINDOW REMOVED
-                    for x_idx in range(0,radargram.shape[1]): 
-                        coord_idxs = np.where(np.array(xs) == x_idx)
-                        coord_idxs = coord_idxs[0]
-                        # if there are at least 2 crossings at the x
-                        if len(coord_idxs) > 2:
-                            cxs = []; cys = []
-                            for idx in coord_idxs:
-                                cxs.append(xs[idx]); cys.append(ys[idx]) # grab the x and y coordinates
-                    
-                            # grab the first pair of ys that is > 1 apart
-                            diff_idxs = np.where(np.diff(cys) > 1)[0]
-                            if len(diff_idxs) > 0:
-                                diff_first = diff_idxs[0]
-                                diff_last = diff_idxs[-1]+1
-                                Isurf = int(cys[diff_first]) # grab the returns
-                                # Iground = int(cys[diff_first+1]) # grab the paired return
-                                Iground = int(cys[diff_last]) # grab the last return
-                                    
-                                if Isurf <= Isurf_thresh and Iground >= Isurf_thresh: # look within upper portion for surface return, ground peak must be below
-                                    depth = (TWT[Iground]-TWT[Isurf])*velocity/2 # calculate depth from TWTs
-                                    # print(depth)
-                                    ax.plot(x_idx, Isurf, 'b.', alpha=a)# plot the surface return
-                                    ax.plot(x_idx, Iground, 'r.', alpha=a)# plot the ground return
-                                    # depths.append(depth)
-                                    
-                                    all_depths.append(depth[0]); rd_depths.append(depth[0])
-                                    all_depth_xs.append(xs_split[x_idx]); rd_depth_xs.append(xs_split[x_idx])
-                                    all_depth_ys.append(ys_split[x_idx]); rd_depth_ys.append(ys_split[x_idx])
-                                    rd_surf_idxs.append(Isurf); rd_ground_idxs.append(Iground)
-                                    rd_x_idxs.append(x_idx)
-                                else:
-                                    all_depths.append(np.NaN); rd_depths.append(np.NaN)
-                                    all_depth_xs.append(np.NaN); rd_depth_xs.append(np.NaN)
-                                    all_depth_ys.append(np.NaN); rd_depth_ys.append(np.NaN)
-                                    rd_surf_idxs.append(np.NaN); rd_ground_idxs.append(np.NaN)
-                                    rd_x_idxs.append(np.NaN)
-                            else:
-                                # depths.append(np.NaN)
-                                all_depths.append(np.NaN); rd_depths.append(np.NaN)
-                                all_depth_xs.append(np.NaN); rd_depth_xs.append(np.NaN)
-                                all_depth_ys.append(np.NaN); rd_depth_ys.append(np.NaN)
-                                rd_surf_idxs.append(np.NaN); rd_ground_idxs.append(np.NaN)
-                                rd_x_idxs.append(np.NaN)
-                
-                    # create coordinates output folder if it doesn't exist:
-                    if not os.path.exists(outpath+'coords/'):
-                        os.mkdir(outpath+'coords/')
-                        
-                    # write to CSV 
-                    export_df = pd.DataFrame(list(zip(rd_depth_xs, rd_depth_ys, rd_depths, rd_surf_idxs, rd_ground_idxs, rd_x_idxs)), columns=['x','y','depth', 'Isurf','Iground','x_idx'])
-                    export_df.to_csv(outpath +'/coords/rd'+str(counter).zfill(2)+'_'+str(wtmm_scale)+'scale_'+str(size_thresh)+'size_'+str(mod_thresh_multiplier)+'mod.csv')
-                    plt.tight_layout() # display as figure
-                    ax.legend(['surface','ground'])
-                    plt.savefig(outpath +'rd'+str(counter).zfill(2)+'_'+str(wtmm_scale)+'scale_'+str(size_thresh)+'size_'+str(mod_thresh_multiplier)+'mod.jpg',dpi=200)
-                    plt.show()
+                    # depths.append(np.NaN)
+                    all_depths.append(np.NaN); rd_depths.append(np.NaN)
+                    all_depth_xs.append(np.NaN); rd_depth_xs.append(np.NaN)
+                    all_depth_ys.append(np.NaN); rd_depth_ys.append(np.NaN)
+                    rd_surf_idxs.append(np.NaN); rd_ground_idxs.append(np.NaN)
+                    rd_x_idxs.append(np.NaN)
+
+        # create coordinates output folder if it doesn't exist:
+        if not os.path.exists(outpath+'coords/'):
+            os.mkdir(outpath+'coords/')
+
+        # write to CSV 
+        export_df = pd.DataFrame(list(zip(rd_depth_xs, rd_depth_ys, rd_depths, rd_surf_idxs, rd_ground_idxs, rd_x_idxs)), columns=['x','y','depth', 'Isurf','Iground','x_idx'])
+        export_df.to_csv(outpath +'/coords/rd'+str(counter).zfill(2)+'_'+str(wtmm_scale)+'scale_'+str(size_thresh)+'size_'+str(mod_thresh_multiplier)+'mod.csv')
+        plt.tight_layout() # display as figure
+        ax.legend(['surface','ground'])
+        plt.savefig(outpath +'rd'+str(counter).zfill(2)+'_'+str(wtmm_scale)+'scale_'+str(size_thresh)+'size_'+str(mod_thresh_multiplier)+'mod.jpg',dpi=200)
+        plt.show()
     counter+=1 # count the split radargrams
 
 
