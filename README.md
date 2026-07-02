@@ -21,6 +21,8 @@ docker pull jukesliu/autoterm:autoterm
 ```
 
 ## Workflow for picking snow depths from FMCW radar outputs:
+The FMCW Radar processing is run in MATLAB through the **process_GM2020.m** script. The code requires the download of another GitHub repository [FMCWRadarGround](https://github.com/hpmarshall/FMCWradarGround.git).
+
 The three main scripts used are **01_calibrate_radargrams.ipynb**, **02_process_radargrams_wtmm.py**, and **03_clean_WTMM_radar_picks.ipynb**. 01 and 03 are interactive and therefore must be run as Jupyter notebooks (on Borah OnDemand for Boise State users). 02 can be run on Borah as jobs or on a local machine using the .ipynb version.
 
 * 01_calibrate_radargrams.ipynb (Borah OnDemand)
